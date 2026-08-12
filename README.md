@@ -75,7 +75,7 @@ install -m 600 /dev/null secrets/tailscale-authkey
 Edit `.env`:
 
 ```dotenv
-IMAGE_TAG=0.1.0
+IMAGE_TAG=latest
 DERPER_HOSTNAME=derp.example.com
 DERPER_CERT_DIR=./certs
 DERPER_BIND_IP=0.0.0.0
@@ -202,7 +202,7 @@ for the current policy syntax.
 
 | Variable | Description |
 |---|---|
-| `IMAGE_TAG` | Published image version |
+| `IMAGE_TAG` | Published image tag or channel; use `latest` or pin a release version |
 | `DERPER_HOSTNAME` | TLS hostname and certificate prefix |
 | `DERPER_CERT_DIR` | Host path containing the certificate and key; defaults to the repository's ignored `./certs` directory |
 | `DERPER_BIND_IP` | Host address used to publish the DERP and STUN ports |

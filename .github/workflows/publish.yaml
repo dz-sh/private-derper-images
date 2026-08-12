@@ -69,6 +69,8 @@ jobs:
           push: true
           build-args: |
             TAILSCALE_VERSION=${{ steps.upstream.outputs.version }}
-          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.target }}:${{ steps.upstream.outputs.release }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.target }}:${{ steps.upstream.outputs.release }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.target }}:latest
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
