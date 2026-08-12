@@ -68,7 +68,7 @@ Clone the repository and create the local configuration:
 git clone https://github.com/dz-sh/private-derper-images.git
 cd private-derper-images
 cp .env.example .env
-mkdir -p secrets
+mkdir -p certs secrets
 install -m 600 /dev/null secrets/tailscale-authkey
 ```
 
@@ -77,7 +77,7 @@ Edit `.env`:
 ```dotenv
 IMAGE_TAG=0.1.0
 DERPER_HOSTNAME=derp.example.com
-DERPER_CERT_DIR=/absolute/path/to/derper-certs
+DERPER_CERT_DIR=./certs
 DERPER_BIND_IP=0.0.0.0
 TS_HOSTNAME=private-derper-auth
 TS_AUTHKEY_FILE=./secrets/tailscale-authkey
@@ -89,6 +89,40 @@ Place the certificate and private key in `DERPER_CERT_DIR`:
 derp.example.com.crt
 derp.example.com.key
 ```
+
+### Certbot integration
+
+Certbot 2.3 or newer can copy renewed certificates into `DERPER_CERT_DIR` and
+restart DERP with the included deploy hook:
+
+```bash
+sudo install -o root -g root -m 0755 \
+  scripts/certbot-deploy-derper \
+  /usr/local/sbin/certbot-deploy-derper
+
+cert_dir=$(cd certs && pwd -P)
+```
+
+Attach the hook to the single-domain DERP certificate. `reconfigure` validates
+the new renewal settings against staging; `--run-deploy-hooks` runs the hook
+with the current active certificate:
+
+```bash
+sudo certbot reconfigure \
+  --cert-name derp.example.com \
+  --deploy-hook "/usr/local/sbin/certbot-deploy-derper '${cert_dir}'" \
+  --run-deploy-hooks
+```
+
+The hook derives the filename from the renewed certificate, verifies its TLS
+hostname, and checks an existing container's hostname and certificate mount.
+It restarts DERP only when the container is already running; otherwise it only
+stages the files for the next `docker compose up`. The target certificate
+directory must already exist; a missing directory is treated as a deployment
+error.
+
+If the certificate uses standalone HTTP-01 validation, TCP port 80 must remain
+publicly reachable during issuance and renewal.
 
 Write the auth key without placing it in shell history, then start the services:
 
@@ -170,7 +204,7 @@ for the current policy syntax.
 |---|---|
 | `IMAGE_TAG` | Published image version |
 | `DERPER_HOSTNAME` | TLS hostname and certificate prefix |
-| `DERPER_CERT_DIR` | Absolute host path containing the certificate and key |
+| `DERPER_CERT_DIR` | Host path containing the certificate and key; defaults to the repository's ignored `./certs` directory |
 | `DERPER_BIND_IP` | Host address used to publish the DERP and STUN ports |
 | `TS_HOSTNAME` | Name of the verifier node in the tailnet |
 | `TS_AUTHKEY_FILE` | Path to the Tailscale auth-key file |
@@ -194,7 +228,8 @@ Check DERP selection from a Tailscale client:
 tailscale netcheck
 ```
 
-After renewing the TLS certificate:
+If certificate deployment is not automated, copy the renewed certificate and
+key into `DERPER_CERT_DIR` using the names described above, then restart DERP:
 
 ```bash
 docker compose restart derper

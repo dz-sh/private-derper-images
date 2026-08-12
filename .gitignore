@@ -1,4 +1,5 @@
 .DS_Store
 .env
-certs/
+certs/*
+!certs/.gitkeep
 secrets/

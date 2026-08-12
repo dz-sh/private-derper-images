@@ -10,8 +10,28 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    name: Validate deployment files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Validate Compose and scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          mkdir -p certs secrets
+          : > secrets/tailscale-authkey
+          docker compose config --quiet
+          sh -n scripts/certbot-deploy-derper
+          shellcheck scripts/certbot-deploy-derper
+
   build:
     name: Build ${{ matrix.target }}
+    needs: validate
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -33,6 +53,9 @@ jobs:
           test -n "${TAILSCALE_VERSION}"
           echo "version=${TAILSCALE_VERSION}" >> "${GITHUB_OUTPUT}"
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
@@ -41,7 +64,7 @@ jobs:
         with:
           context: .
           target: ${{ matrix.target }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: false
           build-args: |
             TAILSCALE_VERSION=${{ steps.upstream.outputs.version }}

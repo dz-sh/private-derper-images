@@ -1,0 +1,117 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  echo "usage: $0 CERT_DIR" >&2
+  exit 2
+}
+
+[ "$#" -eq 1 ] || usage
+
+cert_dir=${1%/}
+
+case "$cert_dir" in
+  /*) ;;
+  *) echo "CERT_DIR must be an absolute path" >&2; exit 2 ;;
+esac
+
+[ -d "$cert_dir" ] || {
+  echo "CERT_DIR does not exist: ${cert_dir}" >&2
+  exit 1
+}
+cert_dir=$(CDPATH='' cd -- "$cert_dir" && pwd -P)
+
+: "${RENEWED_LINEAGE:?Certbot did not set RENEWED_LINEAGE}"
+: "${RENEWED_DOMAINS:?Certbot did not set RENEWED_DOMAINS}"
+
+domain_count=$(printf '%s\n' "$RENEWED_DOMAINS" | awk '{print NF}')
+[ "$domain_count" -eq 1 ] || {
+  echo "DERP certificates must contain exactly one domain" >&2
+  exit 1
+}
+hostname=$(printf '%s\n' "$RENEWED_DOMAINS" | awk '{print $1}')
+
+case "$hostname" in
+  ""|.*|*..*|*-.*|*.-*|*[-.]|*[!A-Za-z0-9.-]*)
+    echo "invalid DERP hostname: ${hostname}" >&2
+    exit 1
+    ;;
+esac
+
+fullchain="${RENEWED_LINEAGE}/fullchain.pem"
+privkey="${RENEWED_LINEAGE}/privkey.pem"
+
+[ -f "$fullchain" ] || {
+  echo "Certificate not found: ${fullchain}" >&2
+  exit 1
+}
+[ -f "$privkey" ] || {
+  echo "Private key not found: ${privkey}" >&2
+  exit 1
+}
+
+openssl x509 -in "$fullchain" -noout -checkhost "$hostname" >/dev/null
+
+cert_pub=$(mktemp)
+key_pub=$(mktemp)
+cleanup() {
+  rm -f "$cert_pub" "$key_pub"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 1' HUP INT TERM
+
+openssl x509 -in "$fullchain" -pubkey -noout >"$cert_pub"
+openssl pkey -in "$privkey" -pubout >"$key_pub"
+cmp -s "$cert_pub" "$key_pub" || {
+  echo "Certificate and private key do not match" >&2
+  exit 1
+}
+
+containers=$(docker ps -aq \
+  --filter label=com.docker.compose.project=private-derper \
+  --filter label=com.docker.compose.service=derper)
+
+container_count=$(printf '%s\n' "$containers" | awk 'NF { count++ } END { print count + 0 }')
+[ "$container_count" -le 1 ] || {
+  echo "multiple private-derper containers found" >&2
+  exit 1
+}
+container=$(printf '%s\n' "$containers" | awk 'NF { print; exit }')
+container_running=false
+
+if [ -n "$container" ]; then
+  docker inspect --format '{{range .Config.Cmd}}{{println .}}{{end}}' "$container" \
+    | grep -Fx -- "--hostname=${hostname}" >/dev/null || {
+      echo "certificate hostname does not match the DERP container" >&2
+      exit 1
+    }
+
+  mounted_cert_dir=$(docker inspect --format \
+    '{{range .Mounts}}{{if eq .Destination "/certs"}}{{println .Source}}{{end}}{{end}}' \
+    "$container")
+  [ "$mounted_cert_dir" = "$cert_dir" ] || {
+    echo "CERT_DIR does not match the DERP container mount" >&2
+    exit 1
+  }
+
+  container_running=$(docker inspect --format '{{.State.Running}}' "$container")
+  case "$container_running" in
+    true|false) ;;
+    *) echo "could not determine DERP container state" >&2; exit 1 ;;
+  esac
+fi
+
+# The container runs derper as UID/GID 10001. Restrict the private key without
+# taking ownership of the repository's certs directory from its normal user.
+install -o root -g 10001 -m 0644 \
+  "$fullchain" "${cert_dir}/${hostname}.crt"
+install -o root -g 10001 -m 0640 \
+  "$privkey" "${cert_dir}/${hostname}.key"
+
+if [ "$container_running" = true ]; then
+  docker restart "$container" >/dev/null
+elif [ -n "$container" ]; then
+  echo "Certificate staged; DERP container is not running."
+else
+  echo "Certificate staged; DERP container has not been created yet."
+fi
