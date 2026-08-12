@@ -2,16 +2,18 @@
 
 ARG GO_VERSION=1.26.5
 ARG ALPINE_VERSION=3.22
+ARG TAILSCALE_VERSION
 
 FROM golang:${GO_VERSION}-alpine AS source
 
-ARG TAILSCALE_VERSION=v1.102.2
+ARG TAILSCALE_VERSION
 
 RUN apk add --no-cache ca-certificates git
 
 WORKDIR /src/tailscale
 
-RUN git clone \
+RUN test -n "${TAILSCALE_VERSION}" && \
+    git clone \
       --branch "${TAILSCALE_VERSION}" \
       --depth 1 \
       https://github.com/tailscale/tailscale.git \
@@ -63,6 +65,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM alpine:${ALPINE_VERSION} AS derper
 
+ARG TAILSCALE_VERSION
+
 RUN apk add --no-cache ca-certificates && \
     addgroup -S -g 10001 derper && \
     adduser -S -D -H -u 10001 -G derper derper && \
@@ -74,7 +78,8 @@ COPY --from=source /src/tailscale/LICENSE /usr/share/licenses/tailscale/LICENSE
 
 LABEL org.opencontainers.image.source="https://github.com/dz-sh/private-derper-images" \
       org.opencontainers.image.description="Minimal non-root Tailscale DERP server image" \
-      org.opencontainers.image.licenses="BSD-3-Clause"
+      org.opencontainers.image.licenses="BSD-3-Clause" \
+      io.github.dz-sh.tailscale.version="${TAILSCALE_VERSION}"
 
 USER 10001:10001
 
@@ -84,6 +89,8 @@ ENTRYPOINT ["/usr/local/bin/derper"]
 
 
 FROM alpine:${ALPINE_VERSION} AS tailscale-auth
+
+ARG TAILSCALE_VERSION
 
 RUN apk add --no-cache ca-certificates && \
     install -d -m 0755 /var/lib/tailscale /var/run/tailscale /usr/share/licenses/tailscale
@@ -95,6 +102,7 @@ COPY --from=source /src/tailscale/LICENSE /usr/share/licenses/tailscale/LICENSE
 
 LABEL org.opencontainers.image.source="https://github.com/dz-sh/private-derper-images" \
       org.opencontainers.image.description="Userspace tailscaled sidecar for DERP client verification" \
-      org.opencontainers.image.licenses="BSD-3-Clause"
+      org.opencontainers.image.licenses="BSD-3-Clause" \
+      io.github.dz-sh.tailscale.version="${TAILSCALE_VERSION}"
 
 ENTRYPOINT ["/usr/local/bin/containerboot"]

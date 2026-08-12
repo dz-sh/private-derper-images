@@ -30,6 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           source upstream/version.env
+          test -n "${TAILSCALE_VERSION}"
           echo "version=${TAILSCALE_VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx

@@ -26,6 +26,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Read upstream version
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          source upstream/version.env
+          test -n "${TAILSCALE_VERSION}"
+          echo "version=${TAILSCALE_VERSION}" >> "${GITHUB_OUTPUT}"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -50,7 +59,8 @@ jobs:
             type=raw,value=latest
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
-            org.opencontainers.image.description=Tailscale ${{ matrix.image }} built from ${{ github.ref_name }}
+            org.opencontainers.image.description=Tailscale ${{ matrix.image }} built from upstream ${{ steps.upstream.outputs.version }}
+            io.github.dz-sh.tailscale.version=${{ steps.upstream.outputs.version }}
 
       - name: Build and publish
         uses: docker/build-push-action@v7
@@ -60,7 +70,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            TAILSCALE_VERSION=${{ github.ref_name }}
+            TAILSCALE_VERSION=${{ steps.upstream.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.target }}

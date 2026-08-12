@@ -11,6 +11,18 @@ This repository builds two images from the **same Tailscale Git tag**:
 The split keeps `tailscaled` out of the relay data path while preventing nodes
 outside the verifier's visible tailnet from using the DERP server.
 
+The repository release version and the upstream Tailscale version are separate:
+
+```text
+Repository release:  v0.1.0
+Upstream source:      v1.102.2
+Published image tag:  0.1.0
+```
+
+`upstream/version.env` is the single source of truth for the Tailscale source
+tag. A Git tag in this repository versions the image packaging and never selects
+the upstream source revision.
+
 ## Security baseline
 
 The included Compose deployment deliberately uses:
@@ -65,6 +77,9 @@ derp.example.com.key
    docker compose ps
    ```
 
+   `IMAGE_TAG` is this repository's image release, not a Tailscale version. Pin
+   it to a published release instead of relying on `latest` in production.
+
 4. After the verifier is logged in and its state volume is persistent, remove
    the reusable credential from disk while keeping the required empty file:
 
@@ -102,16 +117,27 @@ Tailscale documents that `derper` and `tailscaled` used with
 
 ## Publish a release
 
-Push a Git tag matching the desired Tailscale release:
+First choose the upstream source independently in `upstream/version.env`:
+
+```text
+TAILSCALE_VERSION=v1.102.2
+```
+
+Then push a SemVer tag for this repository's packaging release:
 
 ```sh
-git tag v1.102.2
-git push origin v1.102.2
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 GitHub Actions publishes multi-architecture (`linux/amd64` and `linux/arm64`)
-images to GHCR with `1.102.2`, `1.102`, and `latest` tags. The published images
-also include build provenance and an SBOM attestation.
+images to GHCR with `0.1.0`, `0.1`, and `latest` tags. The published images also
+include build provenance, an SBOM attestation, and the exact upstream version in
+the `io.github.dz-sh.tailscale.version` OCI label.
+
+A packaging-only change can release `v0.1.1` without changing the Tailscale
+version. An upstream upgrade changes `upstream/version.env` and is released with
+the next repository version. The two version sequences do not have to match.
 
 ## Licensing
 

@@ -2,7 +2,7 @@ name: private-derper
 
 services:
   tailscale-auth:
-    image: ghcr.io/dz-sh/tailscale-auth:${IMAGE_TAG:-1.102.2}
+    image: ghcr.io/dz-sh/tailscale-auth:${IMAGE_TAG:-latest}
     environment:
       TS_ACCEPT_DNS: "false"
       TS_AUTHKEY: file:/run/secrets/tailscale-authkey
@@ -35,7 +35,7 @@ services:
     restart: unless-stopped
 
   derper:
-    image: ghcr.io/dz-sh/derper:${IMAGE_TAG:-1.102.2}
+    image: ghcr.io/dz-sh/derper:${IMAGE_TAG:-latest}
     command:
       - --a=:8443
       - --http-port=-1
