@@ -15,6 +15,51 @@ Images:
 - A Tailscale auth key
 - Public access to `8443/tcp` and `3478/udp`
 
+## Tailnet preparation
+
+### Create a verifier identity
+
+In **Admin Console → Access controls**, add a dedicated tag for the verifier.
+If the tailnet uses restrictive grants, also make the intended DERP clients
+visible to it. For a personal tailnet containing user-owned and tagged devices:
+
+```jsonc
+{
+  "tagOwners": {
+    "tag:derper-verifier": [],
+  },
+  "grants": [
+    {
+      "src": ["tag:derper-verifier"],
+      "dst": ["autogroup:member", "autogroup:tagged"],
+      "ip": ["icmp:*"],
+    },
+  ],
+}
+```
+
+Merge these entries into the existing policy; do not replace unrelated rules.
+The empty owner list limits tag assignment to tailnet Owners, Admins, and
+Network admins. ICMP permission is sufficient for peer visibility without
+granting the verifier access to application ports. If the policy already allows
+all tailnet devices to communicate, the additional grant is unnecessary.
+
+### Generate the auth key
+
+In **Admin Console → Settings → Keys → Generate auth key**, use:
+
+| Setting | Value | Reason |
+|---|---|---|
+| Description | `private-derper verifier` | Makes the credential identifiable on the Keys page |
+| Reusable | Off | The key provisions one verifier only |
+| Ephemeral | Off | The verifier identity must survive container restarts |
+| Pre-approved | On if device approval is enabled | Avoids a second manual approval step |
+| Tags | `tag:derper-verifier` | Gives the node a non-user server identity |
+| Expiration | 1 day | Limits exposure before the one-off key is used |
+
+Do not create a reusable key. This deployment persists the node identity and
+does not need a standing credential.
+
 ## Quick start
 
 Clone the repository and create the local configuration:
@@ -45,33 +90,76 @@ derp.example.com.crt
 derp.example.com.key
 ```
 
-Write the Tailscale auth key and start the services:
+Write the auth key without placing it in shell history, then start the services:
 
 ```bash
-printf '%s' 'tskey-auth-...' > secrets/tailscale-authkey
+read -rsp 'Tailscale auth key: ' TS_AUTHKEY
+printf '\n'
+printf '%s' "${TS_AUTHKEY}" > secrets/tailscale-authkey
+unset TS_AUTHKEY
+
 docker compose pull
 docker compose up -d
 docker compose ps
 ```
 
-After `tailscale-auth` has joined the tailnet, remove the key from disk while
-keeping the empty secret file:
+Confirm that the verifier has joined:
+
+```bash
+docker compose exec tailscale-auth tailscale status
+docker compose exec tailscale-auth tailscale ip -4
+```
+
+Then open **Admin Console → Machines**, find `TS_HOSTNAME`, and confirm:
+
+- the node has `tag:derper-verifier`;
+- device approval is complete, if enabled;
+- key expiry is disabled.
+
+Tagged nodes normally have key expiry disabled automatically. If the device
+menu shows **Disable Key Expiry**, select it. The verifier is an unattended
+server and the one-off auth key will not be retained, so an expiring node would
+require manual re-authentication and could interrupt client verification.
+
+After these checks, remove the auth key from disk while keeping the empty secret
+file required by Compose:
 
 ```bash
 : > secrets/tailscale-authkey
 ```
 
-## Tailnet setup
+The authenticated identity remains in the `tailscale-state` Docker volume.
 
-The `tailscale-auth` node must be able to see every client allowed to use this
-DERP server. Review its access policy and key-expiry setting in the Tailscale
-admin console.
+## Publish the DERP server to the tailnet
 
-Add the server to the `derpMap` section of the tailnet policy. Set:
+In **Admin Console → Access controls**, add the server to `derpMap`:
 
-- hostname to `DERPER_HOSTNAME`
-- DERP port to `8443`
-- STUN port to `3478`
+```jsonc
+{
+  "derpMap": {
+    "regions": {
+      "900": {
+        "RegionID": 900,
+        "RegionCode": "private",
+        "RegionName": "Private DERP",
+        "Nodes": [
+          {
+            "Name": "900a",
+            "RegionID": 900,
+            "HostName": "derp.example.com",
+            "DERPPort": 8443,
+            "STUNPort": 3478,
+          },
+        ],
+      },
+    },
+  },
+}
+```
+
+Replace `derp.example.com` with `DERPER_HOSTNAME`. Choose an unused region ID;
+`900` is only an example. Keep Tailscale's default regions enabled so clients
+retain fallback relays if this server is unavailable.
 
 See [Tailscale DERP servers](https://tailscale.com/docs/reference/derp-servers)
 for the current policy syntax.
@@ -119,6 +207,24 @@ Upgrade to another published image version:
 docker compose pull
 docker compose up -d
 ```
+
+Re-authenticate only if the verifier loses its state, is removed from the
+tailnet, or key expiry was intentionally enabled and expires. Generate a new
+one-off key with the same settings, write it to the secret file, and restart:
+
+```bash
+read -rsp 'New Tailscale auth key: ' TS_AUTHKEY
+printf '\n'
+printf '%s' "${TS_AUTHKEY}" > secrets/tailscale-authkey
+unset TS_AUTHKEY
+
+docker compose restart tailscale-auth
+docker compose exec tailscale-auth tailscale status
+: > secrets/tailscale-authkey
+```
+
+Do not run `docker compose down -v` during normal upgrades; `-v` deletes the
+persisted Tailscale identity and DERP private key.
 
 ## Build locally
 
