@@ -1,0 +1,73 @@
+name: private-derper
+
+services:
+  tailscale-auth:
+    image: ghcr.io/dz-sh/tailscale-auth:${IMAGE_TAG:-1.102.2}
+    environment:
+      TS_ACCEPT_DNS: "false"
+      TS_AUTHKEY: file:/run/secrets/tailscale-authkey
+      TS_AUTH_ONCE: "true"
+      TS_HOSTNAME: ${TS_HOSTNAME:-private-derper-auth}
+      TS_KUBE_SECRET: ""
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+    secrets:
+      - tailscale-authkey
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - tailscale-run:/var/run/tailscale
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - tailscale
+        - --socket=/var/run/tailscale/tailscaled.sock
+        - ip
+        - -4
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  derper:
+    image: ghcr.io/dz-sh/derper:${IMAGE_TAG:-1.102.2}
+    command:
+      - --a=:8443
+      - --http-port=-1
+      - --hostname=${DERPER_HOSTNAME:?set DERPER_HOSTNAME in .env}
+      - --certmode=manual
+      - --certdir=/certs
+      - --stun-port=3478
+      - --verify-clients
+      - --socket=/var/run/tailscale/tailscaled.sock
+      - --c=/var/lib/derper/derper.key
+    depends_on:
+      tailscale-auth:
+        condition: service_healthy
+    ports:
+      - "${DERPER_BIND_IP:-0.0.0.0}:8443:8443/tcp"
+      - "${DERPER_BIND_IP:-0.0.0.0}:3478:3478/udp"
+    volumes:
+      - tailscale-run:/var/run/tailscale:ro
+      - derper-state:/var/lib/derper
+      - ${DERPER_CERT_DIR:?set DERPER_CERT_DIR in .env}:/certs:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    restart: unless-stopped
+
+secrets:
+  tailscale-authkey:
+    file: ${TS_AUTHKEY_FILE:-./secrets/tailscale-authkey}
+
+volumes:
+  tailscale-state:
+  tailscale-run:
+  derper-state:
