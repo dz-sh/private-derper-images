@@ -1,6 +1,2 @@
-.git
-.github
-.DS_Store
-.env
-certs
-secrets
+*
+!Dockerfile

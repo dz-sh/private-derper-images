@@ -1,157 +1,103 @@
 # private-derper-images
 
-Minimal, auditable container images for a private Tailscale DERP server.
+Two minimal images built from one pinned Tailscale revision:
 
-This repository builds two images from the **same Tailscale Git tag**:
+- `ghcr.io/dz-sh/derper`: non-root DERP and STUN server.
+- `ghcr.io/dz-sh/tailscale-auth`: userspace `tailscaled` verifier.
 
-- `ghcr.io/dz-sh/derper`: the public-facing DERP and STUN service.
-- `ghcr.io/dz-sh/tailscale-auth`: a userspace `tailscaled` sidecar used only by
-  `derper --verify-clients`.
+`tailscale-auth` serves only the LocalAPI used by `derper --verify-clients`; it
+is not in the relay data path.
 
-The split keeps `tailscaled` out of the relay data path while preventing nodes
-outside the verifier's visible tailnet from using the DERP server.
+## Versioning
 
-The repository release version and the upstream Tailscale version are separate:
+| Value | Source | Purpose |
+|---|---|---|
+| Tailscale tag and commit | `upstream/version.env` | Source revision |
+| Repository tag | Git tag such as `v0.1.0` | Packaging release |
+| Image tag | `0.1.0`, `0.1`, `latest` | Published artifact |
 
-```text
-Repository release:  v0.1.0
-Upstream source:      v1.102.2
-Published image tag:  0.1.0
-```
+The repository and Tailscale versions are independent. The build verifies that
+the configured upstream tag resolves to the configured commit.
 
-`upstream/version.env` is the single source of truth for the Tailscale source
-tag. A Git tag in this repository versions the image packaging and never selects
-the upstream source revision.
+## Security
 
-## Security baseline
+- Docker bridge networking; only `8443/tcp` and `3478/udp` are published.
+- No privileged mode, TUN device, `NET_ADMIN`, or added capabilities.
+- All capabilities dropped; `no-new-privileges` enabled.
+- `derper` runs as UID/GID `10001` with a read-only root filesystem.
+- Certificates and the LocalAPI socket are mounted read-only into `derper`.
+- Tailscale identity and DERP key use separate persistent volumes.
+- The Tailscale auth key is mounted as a file-backed Compose secret.
 
-The included Compose deployment deliberately uses:
-
-- Docker bridge networking with only `8443/tcp` and `3478/udp` published;
-- no privileged containers, TUN device, `NET_ADMIN`, or added capabilities;
-- userspace networking for the verifier sidecar;
-- a non-root DERP process (UID/GID `10001`);
-- a read-only DERP root filesystem and read-only certificate/socket mounts;
-- persistent, separate volumes for the Tailscale identity and DERP key;
-- a file-backed Tailscale auth key instead of an environment variable.
-
-The `tailscale-auth` container runs as root inside its container so that
-`containerboot` can create its state and LocalAPI socket. It still has all Linux
-capabilities dropped and cannot gain new privileges.
-
-## Prerequisites
-
-- A Linux host with Docker Engine and Docker Compose v2.
-- A DNS name pointing to the host.
-- A TLS certificate and private key for that DNS name.
-- A Tailscale auth key for the verifier node.
-
-The certificate directory must contain files named after the DERP hostname:
-
-```text
-derp.example.com.crt
-derp.example.com.key
-```
+`tailscale-auth` runs as container root for state and socket initialization, but
+has no Linux capabilities.
 
 ## Deploy
 
-1. Copy the example configuration and create the secret file:
+Requirements: Linux, Docker Engine, Docker Compose v2, DNS, a TLS certificate,
+and a Tailscale auth key.
 
-   ```sh
-   cp .env.example .env
-   mkdir -p secrets
-   install -m 600 /dev/null secrets/tailscale-authkey
-   ```
-
-2. Edit `.env`, then write the auth key to the secret file:
-
-   ```sh
-   printf '%s' 'tskey-auth-...' > secrets/tailscale-authkey
-   ```
-
-3. Start the services:
-
-   ```sh
-   docker compose pull
-   docker compose up -d
-   docker compose ps
-   ```
-
-   `IMAGE_TAG` is this repository's image release, not a Tailscale version. Pin
-   it to a published release instead of relying on `latest` in production.
-
-4. After the verifier is logged in and its state volume is persistent, remove
-   the reusable credential from disk while keeping the required empty file:
-
-   ```sh
-   : > secrets/tailscale-authkey
-   ```
-
-The verifier node must be able to see every client that should use this DERP
-server under the tailnet access policy. Add the DERP node to your tailnet's
-custom DERP map separately.
-
-## Build locally
-
-The default upstream version is recorded in `upstream/version.env`.
-
-```sh
-source upstream/version.env
-
-docker build \
-  --target derper \
-  --build-arg "TAILSCALE_VERSION=${TAILSCALE_VERSION}" \
-  -t "derper:${TAILSCALE_VERSION#v}" \
-  .
-
-docker build \
-  --target tailscale-auth \
-  --build-arg "TAILSCALE_VERSION=${TAILSCALE_VERSION}" \
-  -t "tailscale-auth:${TAILSCALE_VERSION#v}" \
-  .
-```
-
-Both targets check out and build the same Tailscale tag. This is important:
-Tailscale documents that `derper` and `tailscaled` used with
-`--verify-clients` must be built from the same Git revision.
-
-## Publish a release
-
-First choose the upstream source independently in `upstream/version.env`:
+The certificate directory must contain:
 
 ```text
-TAILSCALE_VERSION=v1.102.2
+<DERPER_HOSTNAME>.crt
+<DERPER_HOSTNAME>.key
 ```
 
-Then push a SemVer tag for this repository's packaging release:
+```bash
+cp .env.example .env
+mkdir -p secrets
+install -m 600 /dev/null secrets/tailscale-authkey
+printf '%s' 'tskey-auth-...' > secrets/tailscale-authkey
 
-```sh
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+After the verifier is logged in and `tailscale-state` is persistent:
+
+```bash
+: > secrets/tailscale-authkey
+```
+
+The verifier must be able to see every permitted client under the tailnet policy.
+Configure the custom DERP map separately.
+
+## Build
+
+```bash
+source upstream/version.env
+
+for target in derper tailscale-auth; do
+  docker build \
+    --target "${target}" \
+    --build-arg "TAILSCALE_VERSION=${TAILSCALE_VERSION}" \
+    --build-arg "TAILSCALE_COMMIT=${TAILSCALE_COMMIT}" \
+    -t "private-derper/${target}:dev" \
+    .
+done
+```
+
+## Release
+
+Update and verify `upstream/version.env`, then create an independent repository
+release tag:
+
+```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-GitHub Actions publishes multi-architecture (`linux/amd64` and `linux/arm64`)
-images to GHCR with `0.1.0`, `0.1`, and `latest` tags. The published images also
-include build provenance, an SBOM attestation, and the exact upstream version in
-the `io.github.dz-sh.tailscale.version` OCI label.
+GitHub Actions publishes `linux/amd64` and `linux/arm64` images with provenance,
+SBOM attestations, and upstream version/commit labels. Prereleases do not update
+`latest`.
 
-A packaging-only change can release `v0.1.1` without changing the Tailscale
-version. An upstream upgrade changes `upstream/version.env` and is released with
-the next repository version. The two version sequences do not have to match.
+## License
 
-## Licensing
+Repository files are licensed under [Apache-2.0](LICENSE). Tailscale remains
+under its upstream licenses; its BSD-3-Clause license is included in each image.
 
-The Dockerfiles, workflows, Compose configuration, and documentation in this
-repository are licensed under the [Apache License 2.0](LICENSE).
-
-The images build and redistribute Tailscale software, which remains licensed by
-its upstream authors under BSD-3-Clause and other applicable dependency
-licenses. A copy of Tailscale's license is included inside each image at
-`/usr/share/licenses/tailscale/LICENSE`. This repository does not relicense
-Tailscale.
-
-## Upstream guidance
-
-- [Tailscale DERP server README](https://github.com/tailscale/tailscale/tree/main/cmd/derper)
-- [Tailscale Docker configuration parameters](https://tailscale.com/docs/features/containers/docker/docker-params)
-- [Tailscale custom DERP documentation](https://tailscale.com/kb/1118/custom-derp-servers)
+- [Tailscale DERP README](https://github.com/tailscale/tailscale/tree/main/cmd/derper)
+- [Tailscale Docker parameters](https://tailscale.com/docs/features/containers/docker/docker-params)
+- [Custom DERP servers](https://tailscale.com/kb/1118/custom-derp-servers)
