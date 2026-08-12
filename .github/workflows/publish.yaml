@@ -9,23 +9,16 @@ permissions:
   contents: read
   packages: write
 
-concurrency:
-  group: publish-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   publish:
-    name: Publish ${{ matrix.image }}
+    name: Publish ${{ matrix.target }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - image: derper
-            target: derper
-          - image: tailscale-auth
-            target: tailscale-auth
+        target:
+          - derper
+          - tailscale-auth
 
     steps:
       - name: Check out repository
@@ -38,9 +31,10 @@ jobs:
           set -euo pipefail
           source upstream/version.env
           test -n "${TAILSCALE_VERSION}"
-          test -n "${TAILSCALE_COMMIT}"
+          release="${GITHUB_REF_NAME#v}"
+          test -n "${release}"
           echo "version=${TAILSCALE_VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "commit=${TAILSCALE_COMMIT}" >> "${GITHUB_OUTPUT}"
+          echo "release=${release}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
@@ -55,21 +49,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate image metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
-          labels: |
-            org.opencontainers.image.title=${{ matrix.image }}
-            org.opencontainers.image.description=Tailscale ${{ matrix.image }} built from upstream ${{ steps.upstream.outputs.version }}
-            io.github.dz-sh.tailscale.version=${{ steps.upstream.outputs.version }}
-            io.github.dz-sh.tailscale.commit=${{ steps.upstream.outputs.commit }}
-
       - name: Build and publish
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
@@ -79,10 +58,6 @@ jobs:
           push: true
           build-args: |
             TAILSCALE_VERSION=${{ steps.upstream.outputs.version }}
-            TAILSCALE_COMMIT=${{ steps.upstream.outputs.commit }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.target }}:${{ steps.upstream.outputs.release }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
-          provenance: mode=max
-          sbom: true
