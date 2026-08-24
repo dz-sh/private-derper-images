@@ -1,13 +1,13 @@
 name: private-derper
 
 services:
-  tailscale-auth:
-    image: ghcr.io/dz-sh/tailscale-auth:${IMAGE_TAG:?set IMAGE_TAG in .env}
+  tailscale-relay:
+    image: ghcr.io/dz-sh/tailscale-relay:${IMAGE_TAG:?set IMAGE_TAG in .env}
     environment:
       TS_ACCEPT_DNS: "false"
       TS_AUTHKEY: file:/run/secrets/tailscale-authkey
       TS_AUTH_ONCE: "true"
-      TS_HOSTNAME: ${TS_HOSTNAME:-private-derper-auth}
+      TS_HOSTNAME: ${TS_HOSTNAME:?set TS_HOSTNAME in .env}
       TS_SOCKET: /var/run/tailscale/tailscaled.sock
       TS_STATE_DIR: /var/lib/tailscale
       TS_USERSPACE: "true"
@@ -16,6 +16,8 @@ services:
     volumes:
       - tailscale-state:/var/lib/tailscale
       - tailscale-run:/var/run/tailscale
+    ports:
+      - "${PEER_RELAY_BIND_IP:?set PEER_RELAY_BIND_IP in .env}:5349:5349/udp"
     cap_drop:
       - ALL
     security_opt:
@@ -33,6 +35,28 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  configure-peer-relay:
+    image: ghcr.io/dz-sh/tailscale-relay:${IMAGE_TAG:?set IMAGE_TAG in .env}
+    entrypoint:
+      - /usr/local/bin/tailscale
+    command:
+      - --socket=/var/run/tailscale/tailscaled.sock
+      - set
+      - --relay-server-port=5349
+      - --relay-server-static-endpoints=${PEER_RELAY_STATIC_ENDPOINTS:?set PEER_RELAY_STATIC_ENDPOINTS in .env}
+    depends_on:
+      tailscale-relay:
+        condition: service_healthy
+    volumes:
+      - tailscale-run:/var/run/tailscale:ro
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    restart: "no"
+
   derper:
     image: ghcr.io/dz-sh/derper:${IMAGE_TAG:?set IMAGE_TAG in .env}
     command:
@@ -46,8 +70,8 @@ services:
       - --socket=/var/run/tailscale/tailscaled.sock
       - --c=/var/lib/derper/derper.key
     depends_on:
-      tailscale-auth:
-        condition: service_healthy
+      configure-peer-relay:
+        condition: service_completed_successfully
     ports:
       - "${DERPER_BIND_IP:-0.0.0.0}:8443:8443/tcp"
       - "${DERPER_BIND_IP:-0.0.0.0}:3478:3478/udp"

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.26.6
 ARG ALPINE_VERSION=3.22
 ARG TAILSCALE_VERSION
 
@@ -44,7 +44,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         ./cmd/derper
 
 
-FROM source AS tailscale-auth-build
+FROM source AS tailscale-relay-build
 
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -97,21 +97,23 @@ EXPOSE 8443/tcp 3478/udp
 ENTRYPOINT ["/usr/local/bin/derper"]
 
 
-FROM alpine:${ALPINE_VERSION} AS tailscale-auth
+FROM alpine:${ALPINE_VERSION} AS tailscale-relay
 
 ARG TAILSCALE_VERSION
 
 RUN apk add --no-cache ca-certificates && \
     install -d -m 0755 /var/lib/tailscale /var/run/tailscale /usr/share/licenses/tailscale
 
-COPY --from=tailscale-auth-build /out/tailscale /usr/local/bin/tailscale
-COPY --from=tailscale-auth-build /out/tailscaled /usr/local/bin/tailscaled
-COPY --from=tailscale-auth-build /out/containerboot /usr/local/bin/containerboot
+COPY --from=tailscale-relay-build /out/tailscale /usr/local/bin/tailscale
+COPY --from=tailscale-relay-build /out/tailscaled /usr/local/bin/tailscaled
+COPY --from=tailscale-relay-build /out/containerboot /usr/local/bin/containerboot
 COPY --from=source /src/tailscale/LICENSE /usr/share/licenses/tailscale/LICENSE
 
 LABEL org.opencontainers.image.source="https://github.com/dz-sh/private-derper-images" \
-      org.opencontainers.image.description="Userspace tailscaled sidecar for DERP client verification" \
+      org.opencontainers.image.description="Userspace Tailscale node for DERP client verification and Peer Relay" \
       org.opencontainers.image.licenses="BSD-3-Clause" \
       io.github.dz-sh.tailscale.version="${TAILSCALE_VERSION}"
+
+EXPOSE 5349/udp
 
 ENTRYPOINT ["/usr/local/bin/containerboot"]

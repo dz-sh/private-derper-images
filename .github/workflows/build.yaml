@@ -38,7 +38,7 @@ jobs:
       matrix:
         target:
           - derper
-          - tailscale-auth
+          - tailscale-relay
 
     steps:
       - name: Check out repository

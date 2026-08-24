@@ -1,38 +1,49 @@
 # private-derper-images
 
-Run a tailnet-only Tailscale DERP server with Docker Compose.
+Run a tailnet-only Tailscale DERP server and a Tailscale Peer Relay with
+Docker Compose.
 
 Images:
 
 - `ghcr.io/dz-sh/derper`
-- `ghcr.io/dz-sh/tailscale-auth`
+- `ghcr.io/dz-sh/tailscale-relay`
 
 ## Requirements
 
 - Linux with Docker Engine and Docker Compose v2
 - A public DNS name for the server
 - A TLS certificate for that DNS name
+- A stable public IP address for the Peer Relay
 - A Tailscale auth key
-- Public access to `8443/tcp` and `3478/udp`
+- Public access to `8443/tcp`, `3478/udp`, and `5349/udp`
 
 ## Tailnet preparation
 
-### Create a verifier identity
+### Create a relay identity
 
-In **Admin Console → Access controls**, add a dedicated tag for the verifier.
-If the tailnet uses restrictive grants, also make the intended DERP clients
-visible to it. For a personal tailnet containing user-owned and tagged devices:
+In **Admin Console → Access controls**, add a dedicated tag for the relay node.
+The first grant makes all intended DERP clients visible to the node so that
+`derper --verify-clients` can authenticate them. The second grant lets every
+user-owned and tagged node in the tailnet use this node as a Peer Relay before
+falling back to DERP:
 
 ```jsonc
 {
   "tagOwners": {
-    "tag:derper-verifier": [],
+    "tag:private-relay": [],
   },
   "grants": [
     {
-      "src": ["tag:derper-verifier"],
+      "src": ["tag:private-relay"],
       "dst": ["autogroup:member", "autogroup:tagged"],
       "ip": ["icmp:*"],
+    },
+    {
+      "src": ["autogroup:member", "autogroup:tagged"],
+      "dst": ["tag:private-relay"],
+      "app": {
+        "tailscale.com/cap/relay": [],
+      },
     },
   ],
 }
@@ -40,9 +51,10 @@ visible to it. For a personal tailnet containing user-owned and tagged devices:
 
 Merge these entries into the existing policy; do not replace unrelated rules.
 The empty owner list limits tag assignment to tailnet Owners, Admins, and
-Network admins. ICMP permission is sufficient for peer visibility without
-granting the verifier access to application ports. If the policy already allows
-all tailnet devices to communicate, the additional grant is unnecessary.
+Network admins. ICMP permission is sufficient for DERP peer visibility without
+granting the relay node access to application ports. The Peer Relay application
+capability selects an underlay path only; normal IP grants still determine
+whether two nodes may communicate and which application ports they may use.
 
 ### Generate the auth key
 
@@ -50,11 +62,11 @@ In **Admin Console → Settings → Keys → Generate auth key**, use:
 
 | Setting | Value | Reason |
 |---|---|---|
-| Description | `private-derper verifier` | Makes the credential identifiable on the Keys page |
-| Reusable | Off | The key provisions one verifier only |
-| Ephemeral | Off | The verifier identity must survive container restarts |
+| Description | `private relay` | Makes the credential identifiable on the Keys page |
+| Reusable | Off | The key provisions one relay node only |
+| Ephemeral | Off | The relay identity must survive container restarts |
 | Pre-approved | On if device approval is enabled | Avoids a second manual approval step |
-| Tags | `tag:derper-verifier` | Gives the node a non-user server identity |
+| Tags | `tag:private-relay` | Gives the node a non-user infrastructure identity |
 | Expiration | 1 day | Limits exposure before the one-off key is used |
 
 Do not create a reusable key. This deployment persists the node identity and
@@ -79,9 +91,19 @@ IMAGE_TAG=latest
 DERPER_HOSTNAME=derp.example.com
 DERPER_CERT_DIR=./certs
 DERPER_BIND_IP=0.0.0.0
-TS_HOSTNAME=private-derper-auth
+
+PEER_RELAY_BIND_IP=0.0.0.0
+PEER_RELAY_STATIC_ENDPOINTS=203.0.113.10:5349
+
+TS_HOSTNAME=private-relay
 TS_AUTHKEY_FILE=./secrets/tailscale-authkey
 ```
+
+Replace `203.0.113.10:5349` with the stable public `IP:port` that tailnet
+devices can use to reach this host. `203.0.113.10` is a documentation-only
+address and will not work in a deployment. Use the public address even when
+the host is behind NAT, and forward `5349/udp` from that address to this host.
+Do not use a Tailscale IP, a Docker address, or `0.0.0.0` as a static endpoint.
 
 Place the certificate and private key in `DERPER_CERT_DIR`:
 
@@ -134,24 +156,26 @@ unset TS_AUTHKEY
 
 docker compose pull
 docker compose up -d
-docker compose ps
+docker compose ps --all
 ```
 
-Confirm that the verifier has joined:
+Confirm that the relay has joined and that its one-shot configuration completed
+successfully:
 
 ```bash
-docker compose exec tailscale-auth tailscale status
-docker compose exec tailscale-auth tailscale ip -4
+docker compose exec tailscale-relay tailscale status
+docker compose exec tailscale-relay tailscale ip -4
+docker compose logs configure-peer-relay
 ```
 
 Then open **Admin Console → Machines**, find `TS_HOSTNAME`, and confirm:
 
-- the node has `tag:derper-verifier`;
+- the node has `tag:private-relay`;
 - device approval is complete, if enabled;
 - key expiry is disabled.
 
 Tagged nodes normally have key expiry disabled automatically. If the device
-menu shows **Disable Key Expiry**, select it. The verifier is an unattended
+menu shows **Disable Key Expiry**, select it. The relay is an unattended
 server and the one-off auth key will not be retained, so an expiring node would
 require manual re-authentication and could interrupt client verification.
 
@@ -163,6 +187,32 @@ file required by Compose:
 ```
 
 The authenticated identity remains in the `tailscale-state` Docker volume.
+
+## Verify the Peer Relay
+
+The Peer Relay listens on `5349/udp`. The `configure-peer-relay` service waits
+for `tailscale-relay` to join the tailnet, applies the listener and static
+endpoint configuration with `tailscale set`, and exits successfully. DERP does
+not start if this configuration step fails.
+
+From another tailnet node, list the relay candidates delivered by the control
+plane:
+
+```bash
+tailscale debug peer-relay-servers
+```
+
+Generate traffic between two nodes that cannot connect directly, then inspect
+the selected path:
+
+```bash
+tailscale ping <target>
+tailscale status
+```
+
+A working path is reported as `peer-relay <ip>:5349:vni:<id>`. Clients still
+try a direct connection first and fall back to DERP when the Peer Relay is not
+available.
 
 ## Publish the DERP server to the tailnet
 
@@ -206,7 +256,9 @@ for the current policy syntax.
 | `DERPER_HOSTNAME` | TLS hostname and certificate prefix |
 | `DERPER_CERT_DIR` | Host path containing the certificate and key; defaults to the repository's ignored `./certs` directory |
 | `DERPER_BIND_IP` | Host address used to publish the DERP and STUN ports |
-| `TS_HOSTNAME` | Name of the verifier node in the tailnet |
+| `PEER_RELAY_BIND_IP` | Host address used to publish `5349/udp`; normally `0.0.0.0` |
+| `PEER_RELAY_STATIC_ENDPOINTS` | Comma-separated stable public `IP:port` endpoints advertised by the Peer Relay; every endpoint must use port `5349` |
+| `TS_HOSTNAME` | Name of the relay node in the tailnet |
 | `TS_AUTHKEY_FILE` | Path to the Tailscale auth-key file |
 
 Persistent Docker volumes store the Tailscale identity and DERP private key.
@@ -218,8 +270,8 @@ View status and logs:
 
 ```bash
 docker compose ps
-docker compose logs -f tailscale-auth derper
-docker compose exec tailscale-auth tailscale status
+docker compose logs -f tailscale-relay derper
+docker compose exec tailscale-relay tailscale status
 ```
 
 Check DERP selection from a Tailscale client:
@@ -243,7 +295,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Re-authenticate only if the verifier loses its state, is removed from the
+Re-authenticate only if the relay loses its state, is removed from the
 tailnet, or key expiry was intentionally enabled and expires. Generate a new
 one-off key with the same settings, write it to the secret file, and restart:
 
@@ -253,8 +305,9 @@ printf '\n'
 printf '%s' "${TS_AUTHKEY}" > secrets/tailscale-authkey
 unset TS_AUTHKEY
 
-docker compose restart tailscale-auth
-docker compose exec tailscale-auth tailscale status
+docker compose restart tailscale-relay
+docker compose up -d configure-peer-relay derper
+docker compose exec tailscale-relay tailscale status
 : > secrets/tailscale-authkey
 ```
 
@@ -266,7 +319,7 @@ persisted Tailscale identity and DERP private key.
 ```bash
 source upstream/version.env
 
-for target in derper tailscale-auth; do
+for target in derper tailscale-relay; do
   docker build \
     --target "${target}" \
     --build-arg "TAILSCALE_VERSION=${TAILSCALE_VERSION}" \
