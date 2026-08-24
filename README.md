@@ -18,7 +18,7 @@ Images:
 When Peer Relay is enabled, the host also needs:
 
 - A stable public IP address
-- Public access to `5349/udp`
+- Public access to the configured Peer Relay UDP port (default: `5349`)
 
 ## 1. Prepare the tailnet
 
@@ -89,7 +89,8 @@ DERPER_CERT_DIR=./certs
 DERPER_BIND_IP=0.0.0.0
 
 PEER_RELAY_BIND_IP=0.0.0.0
-PEER_RELAY_STATIC_ENDPOINTS=203.0.113.10:5349
+PEER_RELAY_PORT=5349
+PEER_RELAY_PUBLIC_IP=203.0.113.10
 
 TS_HOSTNAME=private-relay
 TS_AUTHKEY_FILE=./secrets/tailscale-authkey
@@ -104,8 +105,8 @@ Swap the comments on the two `COMPOSE_FILE` lines:
 COMPOSE_FILE=compose.yaml:compose.peer-relay.yaml
 ```
 
-Set `PEER_RELAY_STATIC_ENDPOINTS` to the public address that clients use to
-reach this host. If the host is behind NAT, forward `5349/udp` to it.
+Set `PEER_RELAY_PUBLIC_IP` to the public IPv4 address that clients use to reach
+this host. If the host is behind NAT, forward `PEER_RELAY_PORT/udp` to it.
 
 Do not use `203.0.113.10`, a Tailscale IP, a Docker address, or `0.0.0.0` as
 the static endpoint.
@@ -239,7 +240,7 @@ tailscale status
 A working Peer Relay path is shown as:
 
 ```text
-peer-relay <ip>:5349:vni:<id>
+peer-relay <ip>:<port>:vni:<id>
 ```
 
 ## Switch Peer Relay on or off
@@ -262,9 +263,9 @@ Confirm that the Tailscale IP is unchanged:
 docker compose exec tailscale-relay tailscale ip -4
 ```
 
-In DERP-only mode, `5349/udp` is not published and the container does not
-receive `NET_ADMIN`. The startup configuration also clears any Peer Relay
-listener settings left in the persistent state.
+In DERP-only mode, the Peer Relay UDP port is not published and the container
+does not receive `NET_ADMIN`. The startup configuration also clears any Peer
+Relay listener settings left in the persistent state.
 
 ## Configuration reference
 
@@ -275,8 +276,9 @@ listener settings left in the persistent state.
 | `DERPER_HOSTNAME` | DERP TLS hostname and certificate filename prefix |
 | `DERPER_CERT_DIR` | Host directory containing the DERP certificate and key |
 | `DERPER_BIND_IP` | Host address for DERP and STUN ports |
-| `PEER_RELAY_BIND_IP` | Host address for `5349/udp` when Peer Relay is enabled |
-| `PEER_RELAY_STATIC_ENDPOINTS` | Public `IP:5349` endpoints advertised by Peer Relay |
+| `PEER_RELAY_BIND_IP` | Host address used to publish the Peer Relay UDP port |
+| `PEER_RELAY_PORT` | UDP port used by the Peer Relay listener and Docker port mapping |
+| `PEER_RELAY_PUBLIC_IP` | Public IPv4 address advertised by Peer Relay |
 | `TS_HOSTNAME` | Tailscale node name |
 | `TS_AUTHKEY_FILE` | Path to the one-time Tailscale auth-key file |
 

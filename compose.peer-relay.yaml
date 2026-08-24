@@ -1,7 +1,7 @@
 services:
   tailscale-relay:
     ports:
-      - "${PEER_RELAY_BIND_IP:?set PEER_RELAY_BIND_IP in .env}:5349:5349/udp"
+      - "${PEER_RELAY_BIND_IP:?set PEER_RELAY_BIND_IP in .env}:${PEER_RELAY_PORT:?set PEER_RELAY_PORT in .env}:${PEER_RELAY_PORT:?set PEER_RELAY_PORT in .env}/udp"
     cap_add:
       - NET_ADMIN
 
@@ -9,5 +9,5 @@ services:
     command:
       - --socket=/var/run/tailscale/tailscaled.sock
       - set
-      - --relay-server-port=5349
-      - --relay-server-static-endpoints=${PEER_RELAY_STATIC_ENDPOINTS:?set PEER_RELAY_STATIC_ENDPOINTS in .env}
+      - --relay-server-port=${PEER_RELAY_PORT:?set PEER_RELAY_PORT in .env}
+      - --relay-server-static-endpoints=${PEER_RELAY_PUBLIC_IP:?set PEER_RELAY_PUBLIC_IP in .env}:${PEER_RELAY_PORT:?set PEER_RELAY_PORT in .env}
