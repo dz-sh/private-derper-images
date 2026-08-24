@@ -20,6 +20,8 @@ services:
       - "${PEER_RELAY_BIND_IP:?set PEER_RELAY_BIND_IP in .env}:5349:5349/udp"
     cap_drop:
       - ALL
+    cap_add:
+      - NET_ADMIN
     security_opt:
       - no-new-privileges:true
     healthcheck:

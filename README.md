@@ -264,6 +264,18 @@ for the current policy syntax.
 Persistent Docker volumes store the Tailscale identity and DERP private key.
 Removing those volumes creates new identities.
 
+### Container privileges
+
+The `tailscale-relay` service drops every Linux capability and adds back only
+`NET_ADMIN`. Tailscale uses it for `SO_RCVBUFFORCE` and `SO_SNDBUFFORCE` so its
+UDP sockets can use the buffer size required for high-throughput relaying. The
+service remains in its own Docker network namespace, uses userspace networking,
+has no host devices, and keeps `no-new-privileges` enabled.
+
+The `configure-peer-relay` and `derper` services retain no Linux capabilities.
+Do not replace this narrowly scoped capability with `privileged`, host
+networking, or `SYS_ADMIN`.
+
 ## Operations
 
 View status and logs:
