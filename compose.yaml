@@ -16,12 +16,8 @@ services:
     volumes:
       - tailscale-state:/var/lib/tailscale
       - tailscale-run:/var/run/tailscale
-    ports:
-      - "${PEER_RELAY_BIND_IP:?set PEER_RELAY_BIND_IP in .env}:5349:5349/udp"
     cap_drop:
       - ALL
-    cap_add:
-      - NET_ADMIN
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -44,8 +40,8 @@ services:
     command:
       - --socket=/var/run/tailscale/tailscaled.sock
       - set
-      - --relay-server-port=5349
-      - --relay-server-static-endpoints=${PEER_RELAY_STATIC_ENDPOINTS:?set PEER_RELAY_STATIC_ENDPOINTS in .env}
+      - --relay-server-port=
+      - --relay-server-static-endpoints=
     depends_on:
       tailscale-relay:
         condition: service_healthy
